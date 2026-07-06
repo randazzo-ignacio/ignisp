@@ -1,13 +1,13 @@
-# tinylisp v0.1 -- Alpha Specification
+# ignisp v0.1 -- Alpha Specification
 
 > Date: 2026-07-06
 > Status: FROZEN -- documents the pilot implementation as-is.
-> This spec describes what tinylisp v0.1 IS, not what it should be.
+> This spec describes what ignisp v0.1 IS, not what it should be.
 > Future versions may change any of this.
 >
-> The implementation is in tinylisp.c (~500 lines of C).
-> Build: gcc -o tinylisp tinylisp.c
-> Run:   ./tinylisp
+> The implementation is in ignisp.c (~500 lines of C).
+> Build: gcc -o ignisp ignisp.c
+> Run:   ./ignisp
 
 ---
 
@@ -586,8 +586,8 @@ as true in the test position of if.
 
 ### 10.1 Startup
 
-On startup, tinylisp initializes the global environment with all
-primitives and predefined symbols, then prints "tinylisp 0.1 (pilot)"
+On startup, ignisp initializes the global environment with all
+primitives and predefined symbols, then prints "ignisp 0.1 (pilot)"
 and enters the read-eval-print loop.
 
 ### 10.2 Loop

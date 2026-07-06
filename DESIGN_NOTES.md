@@ -1,4 +1,4 @@
-# tinylisp -- Design Notes
+# ignisp -- Design Notes
 
 > Created: 2026-07-06
 > Status: Pre-spec design notes, conversation synthesis
@@ -9,7 +9,7 @@
 
 ## 1. PROJECT VISION
 
-### What is tinylisp?
+### What is ignisp?
 
 A minimal Lisp derivative designed for **maximum portability and longevity**.
 The goal is a personal computational environment that survives decades --
@@ -26,7 +26,7 @@ exists or will exist.
 - **Minimal kernel, maximal self-implementation.**
   The host provides the smallest possible set of primitives. Everything
   else -- cons cells, reader, eval, GC, macros, object system -- is
-  implemented in tinylisp itself.
+  implemented in ignisp itself.
 
 - **Absolute portability over performance.**
   100x slowdown is acceptable. The kernel must be small enough to rewrite
@@ -67,15 +67,15 @@ Build them sequentially, not simultaneously.
 
 ```
 Layer 3: User programs, CLOS-like system, LOOP, FORMAT, etc.
-         (All written in tinylisp, portable)
+         (All written in ignisp, portable)
 
 Layer 2: Standard library
          (cons, car, cdr, reader, printer, eval, defmacro, macros,
-          GC, string ops, list utilities -- all in tinylisp, portable)
+          GC, string ops, list utilities -- all in ignisp, portable)
 
 Layer 1.5: VM + Compiler (optional, for performance)
          (Register-based VM, instruction dispatch, register allocator
-          -- all in tinylisp, portable)
+          -- all in ignisp, portable)
 
 Layer 1: KERNEL -- implemented in host language
          (C today, Python tomorrow, Verilog in 10 years)
@@ -93,7 +93,7 @@ Layer 0: HOST (C, Python, CL, Verilog, whatever the future brings)
    GC is implemented in Layer 2 using only array operations.
 
 2. **The compiler is Layer 2, not Layer 1.**
-   The compiler is written in tinylisp. It is automatically portable.
+   The compiler is written in ignisp. It is automatically portable.
    Multiple backends possible (bytecode, C, x86). The interpreter
    is all you need to bootstrap -- run the compiler through the
    interpreter to produce compiled code.
@@ -322,7 +322,7 @@ that will survive.
 Implement ~15 primitives in C. ~200-400 lines.
 No GC. No reader. No eval. Just primitives.
 
-### Phase 2: tinylisp Core Library (2-4 weeks)
+### Phase 2: ignisp Core Library (2-4 weeks)
 - Bump allocator (cons, car, cdr)
 - Tagged value representation
 - Reader (tokenizer + parser using read-char and arrays)
@@ -359,7 +359,7 @@ No GC. No reader. No eval. Just primitives.
 
 ### Phase 7: Port Kernel (to prove the bet)
 - Rewrite 200-400 line C kernel in Python (or other host)
-- Same tinylisp library runs on top
+- Same ignisp library runs on top
 - Validate the portability claim
 
 ### Phase 8: Hardware (long-term dream)

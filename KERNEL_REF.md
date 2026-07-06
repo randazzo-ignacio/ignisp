@@ -1,4 +1,4 @@
-# tinylisp -- Kernel Reference Implementation Notes
+# ignisp -- Kernel Reference Implementation Notes
 
 > Version: 0.1 (draft)
 > Date: 2026-07-06

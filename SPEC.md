@@ -1,20 +1,20 @@
-# tinylisp -- Language Specification
+# ignisp -- Language Specification
 
 > Version: 0.1 (draft)
 > Date: 2026-07-06
 >
-> This specification defines the tinylisp programming language in
+> This specification defines the ignisp programming language in
 > three parts:
 >
 >   Part 1 -- Kernel: what the host implementation must provide.
 >            This is the portable contract. Rewrite this per host.
 >
 >   Part 2 -- Language: the reader, evaluator, types, and scoping
->            rules that define tinylisp source code and its meaning.
+>            rules that define ignisp source code and its meaning.
 >            Built on top of the kernel. Frozen once stable.
 >
 >   Part 3 -- Standard Library: functions and macros implemented
->            in tinylisp itself. Grows unbounded over time.
+>            in ignisp itself. Grows unbounded over time.
 >
 > The specification is written in terms of mathematical structure,
 > not concrete encoding. Character assignments are defined as

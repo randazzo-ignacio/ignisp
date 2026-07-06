@@ -1,10 +1,10 @@
-/* tinylisp 0.1 -- pilot implementation
+/* ignisp 0.1 -- pilot implementation
  * Absolute minimum Lisp in C.
  * Ugly, slow, no GC, no optimization.
  * This is a throwaway to see the language working.
  *
- * Build: gcc -o tinylisp tinylisp.c
- * Run:   ./tinylisp
+ * Build: gcc -o ignisp ignisp.c
+ * Run:   ./ignisp
  */
 
 #include <stdio.h>
@@ -680,7 +680,7 @@ void init() {
 
 int main() {
     init();
-    printf("tinylisp 0.1 (pilot)\n");
+    printf("ignisp 0.1 (pilot)\n");
     while (1) {
         if (setjmp(error_jmp)) {
             peek_char = -2;

@@ -1,9 +1,9 @@
-# tinylisp -- Kernel Specification (Abstract)
+# ignisp -- Kernel Specification (Abstract)
 
 > Version: 0.1 (draft)
 > Date: 2026-07-06
 >
-> This document defines what a tinylisp kernel implementation must
+> This document defines what a ignisp kernel implementation must
 > provide. It is the portable contract -- the document you rewrite
 > when porting to a new host.
 >
