@@ -235,6 +235,7 @@ correctly and naturally with eager evaluation.
 - Beta reduction engine (eager/applicative order)
 - Memory allocation for terms (Phase 1: malloc, no GC)
 - Garbage collection (Phase 2: mark-sweep or similar)
+- NO mutation. NO arrays. NO mutable cells. Pure functional.
 
 **Layer 2 (Computational Abstraction) provides:**
 - Lambda abstraction: λx.M
@@ -247,16 +248,22 @@ correctly and naturally with eager evaluation.
 - The ignisp compiler (compiles Layer 3 to Layer 2)
 - The ignisp reader (reads S-expressions, produces Layer 2 terms)
 - The ignisp eval (evaluates Layer 3 forms)
+- NO mutation. NO arrays. NO setq. Pure functional.
 
 **Layer 3 (Ignisp) provides:**
 - S-expression syntax (what the programmer writes)
-- Special forms: if, quote, lambda, let, setq, define, defmacro, begin
+- Special forms: if, quote, lambda, let, define, defmacro, begin
+  (NO setq -- immutable language)
 - Macros and macroexpansion
-- Cons cells, strings, symbols, arrays, closures (as Lisp types)
+- Cons cells, strings, symbols, closures (as Lisp types, Church-encoded in Layer 2)
 - Standard library: list ops, string ops, math, I/O
+- Ergonomic macros for immutable programming:
+  `->` (thread-first), `loop`/`for` (comprehensions), `with-state` (state threading)
 - Object system (CLOS-like, built on closures)
 - LOOP, FORMAT, and other conveniences
 - Everything the programmer interacts with
+- Fully immutable. No mutation anywhere. State is threaded through
+  recursion. Macros provide ergonomic syntax that expands to immutable code.
 
 ---
 
@@ -373,24 +380,17 @@ The ignisp core is implemented in Layer 2:
 - **The printer:** takes an ignisp value and writes its textual
   representation (via write-char).
 
-### Open Question: Arrays in Layer 2?
+### No Arrays in Layer 2
 
-The old design had arrays as a kernel primitive. The new design
-is lambda calculus based. Do arrays exist in Layer 2?
+Everything is Church-encoded. Cons cells are lambda closures.
+Strings are lists of integers. The reader, eval, and compiler all
+work with Church-encoded data. This is the purest approach.
 
-**Option A: No arrays.** Everything is Church-encoded. Cons cells
-are lambda closures. Strings are lists of integers. The reader,
-eval, and compiler all work with Church-encoded data. This is the
-purest approach but performance is very poor (O(n) random access
-for everything, heavy closure allocation).
-
-**Option B: Arrays as a Layer 1 primitive.** The reducer provides
-arrays alongside integers and I/O. Cons cells can be implemented as
-2-element arrays. Strings as arrays of integers. This is pragmatic
-and dramatically improves performance for the reader/eval/compiler.
-
-This is a key decision. It affects performance, purity, and the
-FPGA path. To be resolved before writing the Layer 2 spec.
+Performance will be poor (O(n) random access for everything, heavy
+closure allocation). This is an accepted trade-off: simplicity and
+purity over performance. If performance becomes a real problem,
+arrays can be added as a Layer 1 primitive later. The spec starts
+pure.
 
 ---
 
@@ -531,7 +531,8 @@ Why mark-sweep:
 | CLOS in kernel | Not irreducible. Can be macros + closures in Layer 3. |
 | Stack-based VM | Replaced by lambda calculus reducer. The computational model is lambda calculus, not a register/stack machine. |
 | Register-based VM (old IGASM) | Replaced by lambda calculus reducer. Same reason. The VM concept is now Layer 1 (the reducer), not a separate layer. |
-| Arrays as the core data structure | Replaced by lambda calculus. Arrays may still exist as a Layer 1 primitive (open question), but they're not the computational model. |
+| Arrays as the core data structure | Replaced by Church encoding. No arrays in any layer. Simplicity and purity over performance. |
+| Mutation (setq, boxes, mutable cells) | Rejected. Fully immutable language. State threaded through recursion. Macros provide ergonomic syntax. If shared mutable state is needed in the future, boxes can be added then. YAGNI. |
 
 ---
 
@@ -581,9 +582,16 @@ Why mark-sweep:
 
 ## 9. OPEN QUESTIONS
 
-- [ ] **Arrays in Layer 2?** Does the reducer provide arrays as a
-      primitive, or is everything Church-encoded? This is the biggest
-      open question. Affects performance, purity, and FPGA path.
+- [x] **Arrays in Layer 2?** RESOLVED: No arrays. Everything is
+      Church-encoded. Simplicity over performance. If performance
+      becomes a problem, this can be revisited, but the spec starts
+      pure.
+- [x] **Mutation in ignisp?** RESOLVED: Fully immutable. No setq,
+      no boxes, no mutable references anywhere. State is threaded
+      through recursion. Macros (`->`, `loop`, `with-state`) provide
+      ergonomic syntax that expands to immutable code. If shared
+      mutable state is needed in the future (e.g., for concurrency),
+      boxes can be added then. YAGNI.
 - [ ] **Comparison return type.** Do <, >, = return Church-encoded
       booleans or native integers (0/1)? Church booleans are more
       pure but require the reducer to understand lambda terms in
@@ -592,7 +600,7 @@ Why mark-sweep:
       for the reader and eval. Options: unique integers (symbol table
       in Layer 2), Church-encoded strings, or something else.
 - [ ] **How are strings represented?** Church-encoded lists of
-      integers? Arrays of integers (if arrays exist)? Something else?
+      integers? Something else?
 - [ ] **Error handling in Layer 2.** Pure lambda calculus has no
       concept of errors. The reducer needs some error mechanism
       (halt? exception? Church-encoded error values?).
@@ -604,12 +612,8 @@ Why mark-sweep:
       style)? To be decided during bootstrap.
 - [ ] **Layer 3 special forms.** Which special forms does ignisp
       have? The old design had 8 (if, quote, lambda, let, setq,
-      defmacro, define, begin). Does this change?
-- [ ] **Mutation in Layer 3.** Does ignisp have `setq`? If Layer 2
-      is pure lambda calculus (no mutation), how is `setq` implemented?
-      (Possible answer: Layer 2 has mutable arrays, and setq operates
-      on array slots. Or: ignisp is a functional Lisp with no setq.
-      To be decided.)
+      defmacro, define, begin). setq is now removed (immutable).
+      The remaining set needs to be finalized.
 - [ ] **Exact Layer 2 term representation on the tape/in memory.**
       How are variables, abstractions, and applications represented
       in C? In Python? On FPGA? This is a Layer 1 implementation detail.
@@ -618,12 +622,12 @@ Why mark-sweep:
 
 ## NEXT STEPS
 
-1. **Resolve the arrays question.** This is the biggest open question
-   and it affects everything downstream.
+1. **Resolve remaining open questions.** Comparison return type,
+   symbol representation, string representation, error handling.
 2. **Write the Layer 2 spec.** Lambda + ints + IO. Evaluation rules,
    primitives, encoding of basic data (booleans, pairs, lists).
 3. **Write the Layer 3 spec.** Ignisp: types, special forms, reader
-   syntax, evaluation model.
+   syntax, evaluation model. Immutable, no setq.
 4. **Write the Layer 1 spec.** Reducer interface, term representation,
    memory model, I/O.
 5. **Start the Python bootstrap.** Reducer + Layer 2 code generation.
