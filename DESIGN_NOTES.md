@@ -1,6 +1,7 @@
 # ignisp -- Design Notes
 
 > Created: 2026-07-06
+> Revised: 2026-07-10
 > Status: Pre-spec design notes, conversation synthesis
 > Purpose: Capture all architectural decisions and ideas before writing the formal spec.
 > This document is NOT the spec. It is the reasoning that leads to the spec.
@@ -16,21 +17,42 @@ The goal is a personal computational environment that survives decades --
 a language to grow with, modify at will, and rebuild on any platform that
 exists or will exist.
 
+### What ignisp is NOT
+
+- Not a production language. Not for building web servers or running
+  image classification.
+- Not a language that hides performance behind optimizations.
+- Not a language that requires a team to maintain or port.
+
+### What ignisp IS
+
+- A personal computing language for everyday tasks: replacing bash
+  scripts, engineering computing Python programs, automating tasks.
+- A sort of computable pseudocode -- expressive enough to think in,
+  simple enough to fully understand.
+- A language that forces you to write performant code by not hiding
+  complexity behind runtime optimizations. It won't be fast, but it
+  will be honest about what it's doing.
+- A language portable to any computational substrate: CPU, GPU,
+  distributed systems, FPGA, and whatever exists in 50 years.
+- In the 50-year horizon: a language that can be transpiled to
+  optimized languages for specific use cases.
+
 ### Core Philosophy
 
 - **The spec is permanent. The implementation is disposable.**
-  In 50 years, the kernel may have been rewritten 20 times in 20 host
-  languages. The spec is what stays constant. The value is in the spec
-  and the library, not in the implementation.
+  In 50 years, Layer 1 may have been rewritten 20 times in 20 host
+  languages. The spec is what stays constant. The value is in the
+  spec and the library, not in the implementation.
 
-- **Minimal kernel, maximal self-implementation.**
-  The host provides the smallest possible set of primitives. Everything
-  else -- cons cells, reader, eval, GC, macros, object system -- is
-  implemented in ignisp itself.
+- **Three layers, three concerns.**
+  Hardware abstraction (disposable), computational abstraction
+  (permanent), and the language (permanent). Each layer has a
+  clear job and a clear boundary.
 
 - **Absolute portability over performance.**
-  100x slowdown is acceptable. The kernel must be small enough to rewrite
-  in a day in any host language that has arrays and basic arithmetic.
+  100x slowdown is acceptable. The Layer 1 reducer must be small
+  enough to rewrite in a day in any host language.
 
 - **KISS and DRY.** Solo project principles that have paid dividends.
   Every added complexity must justify itself.
@@ -38,439 +60,570 @@ exists or will exist.
 - **No hard dependencies.** If a dependency is small enough to rewrite
   in a day, it's acceptable. Otherwise, eliminate it.
 
+- **Force performance honesty.** The language should not hide
+  computational cost behind lazy evaluation or runtime optimizations.
+  If something is O(n²), the programmer should know.
+
 ### The 50-Year Horizon
 
-This is not a product or a learning exercise. This is a life project.
-The language must be:
-- Simple enough to fully understand decades later
-- Documented well enough to reconstruct from the spec alone
-- Portable enough to run on any future platform
-- Expressive enough to build everything in itself
+This is not a weekend project. It is a language to grow with, modify
+at will, and rebuild on any future platform. When Nacho is 70, he
+wants to still be using this language.
 
-### Hardware Vision
-
-The architecture is designed so that the kernel can be implemented in
-Verilog/VHDL, enabling a true Lisp machine on FPGA or eventually ASIC.
-The kernel primitives map directly to FPGA resources:
-- make-array -> BRAM
-- aref/aset -> BRAM read/write ports
-- Arithmetic -> DSP slices
-- read-char/write-char -> UART/I/O
-- error -> halt and signal
-
-This is three projects sharing one spec: language, VM, hardware.
-Build them sequentially, not simultaneously.
+The architecture is designed so that paradigm shifts (CPU → GPU,
+single-node → distributed, silicon → something else) only require
+rewriting Layer 1. Layers 2 and 3 survive unchanged.
 
 ---
 
-## 2. ARCHITECTURE: LAYERED DESIGN
+## 2. ARCHITECTURE: THREE-LAYER DESIGN
 
 ```
-Layer 3: User programs, CLOS-like system, LOOP, FORMAT, etc.
-         (All written in ignisp, portable)
-
-Layer 2: Standard library
-         (cons, car, cdr, reader, printer, eval, defmacro, macros,
-          GC, string ops, list utilities -- all in ignisp, portable)
-
-Layer 1.5: VM + Compiler (optional, for performance)
-         (Register-based VM, instruction dispatch, register allocator
-          -- all in ignisp, portable)
-
-Layer 1: KERNEL -- implemented in host language
-         (C today, Python tomorrow, Verilog in 10 years)
-         ~200-400 lines. Provides ~15 primitives + 7 special forms.
-
-Layer 0: HOST (C, Python, CL, Verilog, whatever the future brings)
+Layer 3: IGNISP -- THE LANGUAGE (permanent)
+         A normal Lisp. Built on Layer 2.
+         Reader, eval, macros, cons cells, stdlib, object system.
+         This is where the art lives. This is where Nacho spends time.
+         ↓ compiled to
+Layer 2: COMPUTATIONAL ABSTRACTION (permanent, the "assembly")
+         Lambda calculus + native integers + I/O.
+         Not human-writable. A compiler target.
+         This is the permanent kernel of ignisp. Spec frozen once stable.
+         ↓ executed on
+Layer 1: HARDWARE ABSTRACTION (disposable, rewrite per platform)
+         A lambda calculus reducer. Implemented in C today,
+         Python tomorrow, FPGA someday.
+         Rewriting this is the ONLY work needed to port ignisp.
 ```
 
-### Key Architectural Decisions
+### Why Three Layers?
 
-1. **GC is Layer 0/1 concern, NOT a macro.**
-   GC cannot be a Lisp macro -- it needs runtime root set access.
-   In the array-based VM, GC is pure Lisp (~30-50 lines) because
-   all state is in explicit arrays. The host provides allocation;
-   GC is implemented in Layer 2 using only array operations.
+The original design was two layers: a minimal C kernel (arrays,
+arithmetic, I/O) with everything else implemented in Lisp on top
+(metacircular). This had two problems:
 
-2. **The compiler is Layer 2, not Layer 1.**
-   The compiler is written in ignisp. It is automatically portable.
-   Multiple backends possible (bytecode, C, x86). The interpreter
-   is all you need to bootstrap -- run the compiler through the
-   interpreter to produce compiled code.
+1. **The metacircular bootstrap paradox.** To write the reader in
+   Lisp, you need cons cells. To build cons cells, you need the
+   reader to load the code that defines cons cells. This is solvable
+   but painful and leads to fragile bootstraps.
 
-3. **Object representation: tagged values in array slots.**
-   - Fixnums: low bit = 0, shift right to get value
-   - Heap pointers (indices): low bit = 1, clear bit to get index
-   - eq/eql become = on raw slot values
-   - This is how real Lisps do tagged representation, just with
-     array indices instead of machine pointers.
+2. **No separation between computational core and language.** If
+   the kernel and the language are the same thing, there's no
+   boundary to optimize against. "Optimize cons" becomes an
+   abstract task with no home. Knowing himself, Nacho would pour
+   all effort into Layer 3 features and leave the core unoptimized.
 
-4. **Two-phase bootstrap:**
-   - Phase 1: Tree-walking interpreter (get language working, iterate on design)
-   - Phase 2: Register-based VM (performance, structure, hardware-readiness)
-   - Layer 2 code runs unchanged on either execution engine.
+Three layers solves both:
+
+- **Layer 2 is the boundary.** It has its own spec, its own identity.
+  "Optimize the cons implementation" is a concrete task about Layer 2.
+- **The bootstrap is clean.** Layer 2 is simple enough to generate
+  from a script. No chicken-and-egg.
+- **Each layer has a clear job.** Layer 1 is about hardware. Layer 2
+  is about computation. Layer 3 is about the language experience.
+
+### Why Lambda Calculus for Layer 2?
+
+1. **It is the mathematical foundation of computation.** Lambda
+   calculus has been studied for 80+ years and will be studied for
+   50 more. It is permanent in a way that no bytecode format will be.
+
+2. **It is minimal.** Three constructs: variables, abstraction,
+   application. Plus the pragmatic additions (integers, I/O). Few
+   things to implement, few things to port, few things to get wrong.
+
+3. **It separates computation from hardware.** Layer 2 says "here is
+   how computation works." Layer 1 says "here is how to do that on
+   this specific hardware." A paradigm shift (CPU → GPU) changes
+   Layer 1 but not Layer 2.
+
+4. **It maps to any computational substrate.** Lambda calculus
+   reducers have been implemented on CPUs, GPUs, FPGAs, and in
+   distributed systems. The computational model doesn't change.
+
+5. **It is the honest answer to "what is the minimal computational
+   substrate?"** McCarthy's insight was that eval is all you need.
+   Lambda calculus is what eval is built on.
+
+### Layer 2 Design Decisions
+
+**Eager evaluation (applicative order).**
+
+Arguments are evaluated before the function is applied. This is
+how Lisps work. It is simpler to implement than lazy evaluation.
+It avoids space leaks. And it forces performance honesty: if you
+write an infinite list, it actually tries to evaluate it, instead
+of silently deferring until you touch it.
+
+Lazy evaluation lets you get away with non-performant code by
+deferring computation. Eager evaluation doesn't. This aligns with
+the goal of forcing the programmer to be aware of computational cost.
+
+**Z combinator for recursion (no `define` in Layer 2).**
+
+In pure lambda calculus, functions can't refer to themselves by
+name. The Y combinator solves this in lazy evaluation, but with
+eager evaluation it expands infinitely. The Z combinator works
+with eager evaluation:
+
+```
+Z = λf. (λx. f (λv. x x v)) (λx. f (λv. x x v))
+```
+
+Every recursive function in Layer 2 is wrapped in Z. This is ugly
+for humans but Layer 2 is not human-writable -- the compiler
+handles it automatically.
+
+The alternative would be adding `define` or `letrec` as a special
+form in Layer 2. This was rejected because:
+- It breaks the purity of Layer 2 (lambda + application + primitives).
+- Every special form is something Layer 1 must understand.
+- The Z combinator is a one-time compiler transformation, not an
+  ongoing complexity.
+- Layer 3 (ignisp) has `define`. The compiler translates it to Z.
+
+**Layer 2 is not human-writable.**
+
+Layer 2 is a compiler target, not a language for humans. It is
+generated by the ignisp compiler (Layer 3 → Layer 2). Humans write
+ignisp; the compiler produces lambda terms.
+
+This means Layer 2 can be as verbose and mechanical as needed.
+Church-encoded booleans, Z-combinator-wrapped recursion, thunked
+conditionals -- the compiler handles all of it. The human never
+sees Layer 2 code.
+
+**Conditionals via Church encoding with thunks.**
+
+Layer 2 has no `if` special form. Conditionals are Church-encoded:
+
+```
+true  = λx.λy.x
+false = λx.λy.y
+if    = λc.λt.λf. c t f
+```
+
+With eager evaluation, branches must be wrapped in thunks to
+prevent both from being evaluated:
+
+```
+(if condition (λd. then-expr) (λd. else-expr))
+```
+
+The compiler handles this automatically. The programmer writes
+`(if c then else)` in ignisp; the compiler emits the thunked version.
+
+**Data representation via Church encoding.**
+
+Cons cells, lists, booleans -- all Church-encoded in Layer 2:
+
+```
+pair = λa.λb.λf. f a b
+fst  = λp. p (λx.λy.x)    (car)
+snd  = λp. p (λx.λy.y)    (cdr)
+```
+
+With eager evaluation, `pair a b` captures already-evaluated `a`
+and `b` in a closure. `fst` and `snd` extract them. This works
+correctly and naturally with eager evaluation.
+
+### What Each Layer Contains
+
+**Layer 1 (Hardware Abstraction) provides:**
+- Representation of lambda terms (variables, abstractions, applications)
+- Native integer values and operations (+, -, *, /, <, >, =)
+- Character I/O (read-char, write-char)
+- Beta reduction engine (eager/applicative order)
+- Memory allocation for terms (Phase 1: malloc, no GC)
+- Garbage collection (Phase 2: mark-sweep or similar)
+
+**Layer 2 (Computational Abstraction) provides:**
+- Lambda abstraction: λx.M
+- Application: M N
+- Native integer operations (from Layer 1)
+- I/O primitives (from Layer 1)
+- Church-encoded data: booleans, pairs, lists, numbers
+- Z combinator for recursion
+- Thunked conditionals
+- The ignisp compiler (compiles Layer 3 to Layer 2)
+- The ignisp reader (reads S-expressions, produces Layer 2 terms)
+- The ignisp eval (evaluates Layer 3 forms)
+
+**Layer 3 (Ignisp) provides:**
+- S-expression syntax (what the programmer writes)
+- Special forms: if, quote, lambda, let, setq, define, defmacro, begin
+- Macros and macroexpansion
+- Cons cells, strings, symbols, arrays, closures (as Lisp types)
+- Standard library: list ops, string ops, math, I/O
+- Object system (CLOS-like, built on closures)
+- LOOP, FORMAT, and other conveniences
+- Everything the programmer interacts with
 
 ---
 
-## 3. THE KERNEL (Layer 1)
+## 3. LAYER 1: THE REDUCER
 
-The kernel is the only host-dependent code. It must be small enough
-to rewrite in a day. Target: ~200-400 lines.
+Layer 1 is the only host-dependent code. It must be small enough
+to rewrite in a day. Target: ~300-500 lines.
 
-### Primitives (host-provided, ~15)
+### What Layer 1 Implements
 
-| Primitive | Purpose | C implementation |
-|-----------|---------|-----------------|
-| make-array | Allocate memory | malloc |
-| aref | Read array slot | pointer dereference |
-| aset | Write array slot | pointer assignment |
-| + | Addition | native arithmetic |
-| - | Subtraction | native arithmetic |
-| * | Multiplication | native arithmetic |
-| / | Division | native arithmetic |
-| < | Less than | native comparison |
-| > | Greater than | native comparison |
-| = | Equality | native comparison |
-| read-char | Read one character | getchar/fread |
-| write-char | Write one character | putchar/fwrite |
-| error | Abort with message | fprintf + exit/longjmp |
+A lambda calculus reducer with native integers and I/O.
 
-Note: `eq` can be implemented as `=` since everything is an integer
-(fixnum or array index) in the tagged representation.
+**Core:**
+- Term representation: variables, abstractions (λx.M), applications (M N),
+  integer literals
+- Beta reduction: (λx.M) N → M[x := N] with capture-avoiding substitution
+- Evaluation strategy: eager (applicative order) -- evaluate arguments
+  before applying
 
-### Special Forms (7)
+**Primitives (non-lambda values the reducer recognizes):**
+- Native integers (machine-word, signed)
+- Arithmetic: +, -, *, / (integer division, truncating)
+- Comparison: <, >, = (return Church-encoded booleans? or native?
+  -- see Open Questions)
+- I/O: read-char (returns integer or EOF), write-char (takes integer)
 
-| Form | Purpose |
-|------|---------|
-| if | Conditional branching |
-| lambda | Function/closure creation |
-| let | Lexical binding |
-| quote | Prevent evaluation |
-| setq | Variable assignment |
-| defmacro | Macro definition |
-| function | Function value (vs variable value) |
+**Memory:**
+- Phase 1: Allocate terms with malloc, never free. Acceptable for
+  bootstrap and short programs.
+- Phase 2: Garbage collection. The reducer owns all term memory, so
+  the root set is explicit: the current term being reduced + any
+  referenced terms. GC is a Layer 1 concern because the reducer
+  controls memory layout.
 
-### Kernel Parameters (target-dependent)
+### Why GC is Layer 1, Not Layer 2
 
-- Register count (8 on microcontroller, 16-32 on laptop, 256 on server)
-- Heap size
-- Stack size
+In the old architecture, GC was Layer 2 (Lisp code operating on
+arrays). In the new architecture, Layer 2 is lambda calculus -- it
+has no concept of memory management. The reducer (Layer 1) allocates
+terms during beta reduction (substitution creates new terms). The
+reducer must also collect them.
 
-These are compile-time or startup parameters. They do not change
-the instruction set or the VM code -- only the register allocator's
-behavior and the array sizes.
+This is actually simpler: the reducer knows exactly what terms exist
+and which are reachable (it's holding them). Mark-sweep over the term
+graph is straightforward.
 
----
+### Porting Layer 1
 
-## 4. MEMORY MANAGEMENT
+To port ignisp to a new platform:
+1. Implement term representation on the new platform
+2. Implement beta reduction
+3. Implement integer arithmetic
+4. Implement read-char / write-char
+5. Implement memory allocation (and eventually GC)
 
-### Why Not Rust-Style Ownership?
+That's it. No reader, no printer, no eval, no macros, no cons cells.
+All of that is Layer 2/3 and runs unchanged.
 
-Rust's borrow checker works because:
-- Statically typed (all types known at compile time)
-- No eval (all code known at compile time)
-- No runtime macros (codegen before borrow check)
-- Restricted aliasing (no two mutable refs)
-
-Lisp fundamentally contradicts all of these:
-- Dynamic typing
-- eval exists
-- Macros expand at runtime
-- Arbitrary aliasing (closures, shared data)
-
-Ownership analysis for a dynamic Lisp requires a compiler more
-complex than the language itself. The result wouldn't be Lisp anymore.
-
-### Why Not Reference Counting?
-
-- Cycles leak (need separate cycle collector = partial mark-sweep)
-- Every assignment needs inc/dec (hidden overhead everywhere)
-- More code than mark-sweep
-- More complexity for less benefit
-
-### Chosen Approach: Mark-Sweep GC (in Lisp)
-
-**Phase 1 -- Bump allocator, no GC (~10 lines of Lisp):**
-```
-heap-ptr starts at 0
-alloc(n) = advance heap-ptr by n, return old ptr
-cons(x,y) = alloc 2 slots, store x and y, return ptr
-Never free. Leak. Fine for short programs and REPL.
-```
-
-**Phase 2 -- Mark-sweep GC (~30-50 lines of Lisp):**
-```
-1. MARK: Walk from roots (registers, stack, global env).
-   Mark every reachable object.
-2. SWEEP: Walk entire heap. Unmarked objects -> free list.
-   Clear all marks.
-3. Resume.
-```
-
-Root set is explicit and small:
-- Global environment (known data structure)
-- VM call stack (we control it)
-- Temporary roots (temp root stack array)
-
-GC handles closures, cycles, eval, dynamic dispatch -- everything.
-No language restrictions. No compile-time analysis needed.
-
-### Memory Model
-
-All VM state lives in host-provided arrays:
-- THE HEAP: cons cells, symbols, strings, everything
-- REGISTERS: small array (R0-Rn), n is target-dependent
-- THE STACK: call frames
-- FREE LIST: available heap slots
-
-No hidden state in C local variables. Everything explicit and visible.
-This means:
-- GC rooting is trivial (roots = registers + stack, both are arrays)
-- Serialization is free (dump arrays = save state, load = resume)
-  This is image-based persistence, like SBCL core files or Smalltalk images
-- Debugging is transparent (inspect every register, frame, heap slot)
-- Portability is absolute (host only provides arrays)
+The porting effort depends on the platform:
+- **C → Python:** Straightforward. Python has objects, GC, and I/O.
+  Maybe 200 lines.
+- **C → FPGA:** Harder but well-studied. Graph reduction on FPGA is
+  a known technique. Terms in BRAM, reduction logic in LUTs.
+- **C → GPU:** Research territory but possible. Lambda calculus on
+  GPUs has been explored. The parallel reduction model maps to
+  GPU architecture.
+- **C → distributed (Erlang-style):** Harder. Term reduction across
+  nodes requires serialization and message passing. But the Layer 2
+  spec doesn't change -- only the Layer 1 implementation.
 
 ---
 
-## 5. THE VM (Layer 1.5, Phase 2)
+## 4. LAYER 2: THE COMPUTATIONAL ABSTRACTION
 
-### Register-Based Architecture
+### The Language
 
-The VM is register-based (like Lua 5.x, Dalvik), not stack-based.
-Instructions reference registers by index.
+Layer 2 is lambda calculus + native integers + I/O. It has:
 
-### Instruction Set ("TLASM" -- Tinylisp Assembly)
+- **Variables:** x, y, z, ...
+- **Abstraction:** λx.M (function creation)
+- **Application:** M N (function call)
+- **Integer literals:** 0, 1, 42, -17, ...
+- **Integer operations:** +, -, *, /, <, >, = (primitives)
+- **I/O:** read-char, write-char (primitives)
 
-~20-25 instructions. Each is a simple operation on registers and heap.
+That's it. No `define`. No `if`. No `let`. No `quote`. No `defmacro`.
+No strings. No cons cells. No symbols. No arrays.
 
-```
-;; Memory operations
-LOAD r0 constant        ; load fixnum/nil/true into r0
-GETCAR r0 r1            ; r0 = car of cons at r1
-GETCDR r0 r1            ; r0 = cdr of cons at r1
-SETCAR r0 r1            ; car of cons at r0 = r1
-SETCDR r0 r1            ; cdr of cons at r0 = r1
-CONS r0 r1 r2           ; r0 = new cons (car=r1, cdr=r2)
+Everything else is built from these:
 
-;; Arithmetic
-ADD r0 r1 r2            ; r0 = r1 + r2
-SUB r0 r1 r2            ; r0 = r1 - r2
-;; etc.
+| Concept | Layer 2 encoding |
+|---------|-----------------|
+| true/false | λx.λy.x / λx.λy.y |
+| if | λc.λt.λf. c t f (with thunks for branches) |
+| pair (cons) | λa.λb.λf. f a b |
+| fst (car) | λp. p (λx.λy.x) |
+| snd (cdr) | λp. p (λx.λy.y) |
+| nil | λf.λx.x (Church-encoded empty list) |
+| list | chains of pairs ending in nil |
+| recursion | Z combinator wrapping |
+| numbers | native integers (not Church numerals) |
 
-;; Control flow
-JUMP label              ; unconditional jump
-JUMP-IF r0 label        ; jump if r0 is not nil
-CALL r0 func args...    ; call function, result in r0
-RET r0                  ; return r0 to caller
+### What Lives in Layer 2
 
-;; Environment
-LOOKUP r0 sym           ; r0 = value of symbol in current env
-BIND sym r0             ; bind symbol to r0 in current env
-SET sym r0              ; set symbol to r0
+The ignisp core is implemented in Layer 2:
+- **The compiler:** translates ignisp S-expressions (Layer 3) into
+  Layer 2 lambda terms. This is the most complex piece of Layer 2.
+- **The reader:** reads characters from input (via read-char) and
+  produces ignisp S-expressions (represented as Church-encoded lists
+  of symbols and values).
+- **The eval:** takes an ignisp form and evaluates it. In the
+  tree-walking phase, this is direct. In the compiled phase, this
+  is the compiler itself.
+- **The printer:** takes an ignisp value and writes its textual
+  representation (via write-char).
 
-;; Functions
-MAKE-CLOSURE r0 lambda env  ; r0 = closure
-```
+### Open Question: Arrays in Layer 2?
 
-### VM Dispatch Loop (in Lisp)
+The old design had arrays as a kernel primitive. The new design
+is lambda calculus based. Do arrays exist in Layer 2?
 
-The VM is a Lisp function with TCO. It reads instructions from an
-array and dispatches. The host's call stack is irrelevant -- the VM
-is a state machine with state in arrays.
+**Option A: No arrays.** Everything is Church-encoded. Cons cells
+are lambda closures. Strings are lists of integers. The reader,
+eval, and compiler all work with Church-encoded data. This is the
+purest approach but performance is very poor (O(n) random access
+for everything, heavy closure allocation).
 
-```lisp
-(defun vm-run (pc)
-  (let ((instr (aref code-array pc)))
-    (let ((op (aref instr 0)))
-      (cond
-        ((= op OP-ADD)
-         (aset regs (aref instr 1)
-               (+ (aref regs (aref instr 2))
-                  (aref regs (aref instr 3))))
-         (vm-run (+ pc 1)))
-        ((= op OP-JUMP)
-         (vm-run (aref instr 1)))
-        ((= op OP-RET)
-         (aref regs (aref instr 1)))
-        (t (error "unknown opcode"))))))
-```
+**Option B: Arrays as a Layer 1 primitive.** The reducer provides
+arrays alongside integers and I/O. Cons cells can be implemented as
+2-element arrays. Strings as arrays of integers. This is pragmatic
+and dramatically improves performance for the reader/eval/compiler.
 
-### Variable Register Count
-
-The register count is a target parameter, not a structural change:
-- Microcontroller: 8 registers
-- Laptop: 16-32 registers
-- Server: 256 registers
-
-Same instruction set, same VM code. Only the compiler's register
-allocator changes behavior. Compiled bytecode is target-specific
-(different register usage), but source code is portable. Recompile
-per target, same as C.
+This is a key decision. It affects performance, purity, and the
+FPGA path. To be resolved before writing the Layer 2 spec.
 
 ---
 
-## 6. BOOTSTRAPPING PLAN
+## 5. BOOTSTRAPPING
 
-### Phase 0: Spec (1 week)
-Write the formal specification. Types, special forms, primitives,
-evaluation rules, scoping, TCO policy. One page if possible.
-This is the permanent asset. Write it like it's the only thing
-that will survive.
+### The Bootstrap Problem
 
-### Phase 1: C Kernel (1-2 weeks)
-Implement ~15 primitives in C. ~200-400 lines.
-No GC. No reader. No eval. Just primitives.
+Layer 2 is not human-writable. The ignisp compiler (which translates
+Layer 3 to Layer 2) is itself written in... what? If it's written in
+ignisp, it needs to be compiled to Layer 2. But to compile it, you
+need the compiler. Chicken-and-egg.
 
-### Phase 2: ignisp Core Library (2-4 weeks)
-- Bump allocator (cons, car, cdr)
-- Tagged value representation
-- Reader (tokenizer + parser using read-char and arrays)
-- Printer
-- eval (special forms + function application)
-- defmacro and macroexpansion
-- Basic list utilities (list, append, reverse, mapcar)
-- Working Lisp with no GC. Leaks memory. That's fine.
+### The Bootstrap Solution
 
-### Phase 3: GC (1 week)
-- Mark-sweep, ~30-50 lines of Lisp
-- Root set: global env + VM call stack
-- Call gc when heap fills up
-- Long-lived programs now work
+Use a Python script as the bootstrap compiler. The script:
 
-### Phase 4: Standard Library (ongoing)
+1. **Implements a minimal lambda calculus reducer** (Layer 1 in
+   Python -- quick and dirty, for testing only).
+
+2. **Generates Layer 2 code** that implements the ignisp core
+   (reader, eval, basic stdlib). This generation is done by the
+   Python script -- it writes out lambda terms that, when reduced,
+   constitute a working ignisp interpreter.
+
+3. **Tests the generated Layer 2 code** on the Python reducer.
+
+Once the Layer 2 code works on the Python reducer:
+
+4. **Write Layer 1 in C** (the real reducer).
+
+5. **Run the same Layer 2 code** on the C reducer.
+
+6. **ignisp is now running.** From this point, all development
+   happens in ignisp (Layer 3). The Python script and Python reducer
+   are discarded.
+
+The bootstrap is a one-time cost. Once ignisp runs on the C reducer,
+the Python script is thrown away. Future changes to ignisp happen
+in ignisp, compiled by the ignisp compiler (which runs on the C
+reducer, which executes Layer 2).
+
+### Bootstrap Phases
+
+**Phase 0: Spec (1-2 weeks)**
+- Write the Layer 2 spec (lambda + ints + IO, evaluation rules)
+- Write the Layer 3 spec (ignisp: types, special forms, primitives)
+- Write the Layer 1 spec (reducer interface, memory model)
+- These are the permanent documents.
+
+**Phase 1: Bootstrap in Python (2-4 weeks)**
+- Python lambda calculus reducer (~200 lines)
+- Generate Layer 2 code for ignisp core (reader, eval, printer)
+- Test: can it read and evaluate simple ignisp programs?
+- This is throwaway code. Don't over-engineer it.
+
+**Phase 2: C Reducer (1-2 weeks)**
+- Implement Layer 1 in C (~300-500 lines)
+- Run the Phase 1 Layer 2 code on it
+- Verify: same behavior as Python reducer
+- Now ignisp runs on C. Python bootstrap discarded.
+
+**Phase 3: ignisp Core in ignisp (2-4 weeks)**
+- Rewrite the reader, eval, and printer in ignisp itself
+- Compile to Layer 2 using the bootstrap compiler
+- Verify: the self-hosted version produces the same Layer 2 code
+- Now ignisp is self-hosting. The bootstrap compiler can be retired.
+
+**Phase 4: Standard Library (ongoing)**
 - cond, case, when, unless, and, or (macros)
 - let*, labels, flet (macros)
 - String operations
-- loop (macro, if wanted)
-- Simple CLOS-like object system (closures + hash tables)
-- Format-like string interpolation (macro)
+- List utilities (map, filter, reduce, append, reverse)
+- File I/O
+- Error handling / conditions
 - This is where the language becomes YOURS.
 
-### Phase 5: Register VM + Compiler (2-4 months, optional)
-- Compiler: Lisp AST -> instruction array
-- VM: register file, stack, instruction dispatch
-- Register allocator parameterized by target
-- Standard library runs unchanged on VM
+**Phase 5: GC (1-2 weeks)**
+- Mark-sweep in the C reducer
+- Root set: current term + referenced terms
+- Long-lived programs now work
 
-### Phase 6: Self-Host (optional, the holy grail)
-- Compile the compiler with itself
-- Kernel only needed for bootstrapping new hosts
+**Phase 6: Transpiler (long-term, future)**
+- Compile ignisp to C, Python, or other target languages
+- The 50-year horizon: transpile to whatever exists
+- Not needed for the language to be useful, but needed for
+  the "computable pseudocode" vision.
 
-### Phase 7: Port Kernel (to prove the bet)
-- Rewrite 200-400 line C kernel in Python (or other host)
-- Same ignisp library runs on top
-- Validate the portability claim
-
-### Phase 8: Hardware (long-term dream)
-- Implement kernel in Verilog
-- Run on FPGA as a true Lisp machine
+**Phase 7: Hardware (long-term dream)**
+- Implement Layer 1 (reducer) in Verilog
+- Run on FPGA as a lambda calculus machine
 - Eventually: custom ASIC
 
 ---
 
-## 7. TYPES (DRAFT -- to be finalized in spec)
+## 6. MEMORY MANAGEMENT
 
-Proposed initial type set:
-- Fixnum (tagged, immediate)
-- Symbol (interned, index into symbol table)
-- Cons (two heap slots)
-- String (array of characters, or cons list initially)
-- Array (host-provided, primitive)
-- Function/Closure (lambda + captured environment)
-- NIL (empty/false)
-- TRUE (truthy -- could just be a specific fixnum)
+### Phase 1: Bump Allocator, No GC
 
-Deferred types (implement in Layer 2 if needed):
-- Bignum (Lisp-implemented on top of fixnum arrays)
-- Ratio (Lisp-implemented)
-- Complex (Lisp-implemented)
-- Vector (Lisp-implemented on top of arrays)
-- Hash table (Lisp-implemented)
-- Character (could be fixnum initially)
+The reducer allocates terms with malloc and never frees. Acceptable
+for bootstrap and short REPL sessions. Memory leaks are expected
+and documented.
+
+### Phase 2: Mark-Sweep GC
+
+The reducer owns all term memory. The root set is explicit: the
+current term being reduced, plus any terms referenced by it (which
+the reducer is tracking during reduction). Mark-sweep walks the
+term graph, marks reachable terms, frees the rest.
+
+Why mark-sweep:
+- Handles cycles (closures can reference themselves via Z combinator)
+- No compile-time analysis needed
+- Simple to implement in the reducer (~50-100 lines of C)
+- No language restrictions (eval, runtime macros, arbitrary aliasing
+  all work)
+
+### Why Not Other Approaches?
+
+| Approach | Why Rejected |
+|----------|-------------|
+| Rust-style ownership | Requires static analysis. Restricts dynamic features (eval, runtime macros). Not Lisp. |
+| Reference counting | Cycles leak. Every term reference needs inc/dec. More code than mark-sweep. |
+| Copying GC | Requires moving terms, which means updating all references. Harder with lambda terms (closures capture references). |
+| Region-based | Requires compile-time analysis. Too complex for a solo project. |
 
 ---
 
-## 8. SCOPING (DRAFT -- to be finalized in spec)
-
-Proposed: lexical scoping by default.
-Dynamic/special variables can be added later as a macro or
-special form if needed.
-
-TCO: Yes. The VM controls the call stack (it's an array),
-so tail calls are just "replace current frame and jump."
-This is natural in the register VM architecture.
-
----
-
-## 9. WHAT WAS REJECTED AND WHY
+## 7. WHAT WAS REJECTED AND WHY
 
 | Idea | Why Rejected |
 |------|-------------|
+| Metacircular (X = Y) | No layer boundary to optimize against. Bootstrap paradox. Knowing himself, Nacho would never optimize the core. |
+| Pure lambda calculus (no ints) | Church numerals are impractical. O(n) addition. Can't compute 1000+1. |
+| Pure SKI combinators | Not human-readable at all. Even compiler-generated code is unmanageable. |
+| Lazy evaluation | Hides performance cost. Space leaks. Harder to implement. Doesn't force performance honesty. |
+| `define` in Layer 2 | Breaks purity. Every special form is something Layer 1 must understand. Z combinator is a compiler transformation, not a language feature. |
 | Full ANSI CL | Too complex. 1100 pages. Decades of work. |
-| CLOS in kernel | Not irreducible. Can be macros + closures. |
-| LOOP in kernel | It's a macro. Build it in Layer 2. |
-| FORMAT in kernel | It's a macro. Build it in Layer 2. |
-| GC as a macro | Impossible. GC needs runtime root access. |
-| Rust-style ownership | Requires static analysis, restricts dynamic features. Not Lisp. |
-| Reference counting | Cycles leak. More code than GC. Hidden overhead. |
-| Compile to native (SBCL-style) | Decades of work. Not needed for this project. |
-| Stack-based VM | Register-based is more natural for this architecture. |
+| CLOS in kernel | Not irreducible. Can be macros + closures in Layer 3. |
+| Stack-based VM | Replaced by lambda calculus reducer. The computational model is lambda calculus, not a register/stack machine. |
+| Register-based VM (old IGASM) | Replaced by lambda calculus reducer. Same reason. The VM concept is now Layer 1 (the reducer), not a separate layer. |
+| Arrays as the core data structure | Replaced by lambda calculus. Arrays may still exist as a Layer 1 primitive (open question), but they're not the computational model. |
 
 ---
 
-## 10. KEY INSIGHTS FROM THE DESIGN CONVERSATION
+## 8. KEY INSIGHTS
 
-1. **The spec is the language.** The implementation is disposable.
-   In 50 years, the kernel may be rewritten 20 times. The spec persists.
+1. **Three layers, not two.** The metacircular approach (X = Y)
+   collapses the computational core and the language into one thing.
+   Three layers gives each concern its own home and its own spec.
 
-2. **The kernel is shockingly small.** ~15 primitives, 7 special forms,
-   200-400 lines. This is what makes "rewrite in a day" real.
+2. **Layer 2 is lambda calculus, not bytecode.** Bytecode formats
+   are ephemeral -- they change with hardware. Lambda calculus is
+   permanent -- it has outlived every hardware architecture of the
+   last 80 years and will outlive the next 80.
 
-3. **GC in the array-based VM is pure Lisp.** ~30-50 lines. Handles
-   everything. No host dependency. No language restrictions.
+3. **Layer 2 is not human-writable.** This is a feature, not a bug.
+   It means Layer 2 can be mechanically generated, mechanically
+   optimized, and mechanically verified. Humans write ignisp;
+   the compiler handles the rest.
 
-4. **The VM state is entirely in arrays.** No hidden C stack state.
-   This enables: trivial GC rooting, image-based persistence,
-   transparent debugging, absolute portability.
+4. **Eager evaluation forces honesty.** Lazy evaluation lets you
+   write O(n²) code that looks like O(1). Eager evaluation doesn't
+   hide the cost. This aligns with the goal of a language that
+   teaches computing.
 
-5. **Two-phase bootstrap avoids the chicken-and-egg problem.**
-   Interpreter first (get language working), compiler second
-   (get performance), self-host third (the holy grail).
+5. **The Z combinator is the price of purity.** No `define` in
+   Layer 2 means recursion goes through Z. This is ugly for humans
+   but invisible (the compiler handles it). The payoff: Layer 2
+   has no special forms at all. Pure lambda + ints + IO.
 
-6. **Variable register count per target** is a parameter, not a
-   structural change. Same instruction set, same VM, different
-   register file size. Source portable, bytecode target-specific.
+6. **The bootstrap is a Python script, not a fat C kernel.** The
+   old approach was to build a fat C kernel with cons/car/cdr/reader,
+   use it to bootstrap, then throw it away. The new approach is to
+   generate Layer 2 code from Python, test it on a Python reducer,
+   then move to C. Cleaner, more testable, and the Python script
+   is truly throwaway.
 
-7. **The FPGA/ASIC path is real.** The kernel maps to standard FPGA
-   primitives (BRAM, DSP, UART). A 20-instruction Lisp machine is
-   small enough to fit on a modest FPGA.
+7. **Porting = rewriting Layer 1.** Only the reducer needs to be
+   rewritten per platform. Everything else (Layer 2 and 3) is
+   platform-independent. This is the portability promise.
 
-8. **Mark-sweep is simpler than ownership for dynamic languages.**
-   Rust's complexity is in the compiler. GC's complexity is in the
-   runtime. For a one-person project, runtime complexity is better
-   because you can test it.
-
----
-
-## 11. OPEN QUESTIONS (to resolve in spec)
-
-- [ ] Exact type set and representation details
-- [ ] Exact special form semantics (especially defmacro expansion model)
-- [ ] Error/condition handling model (start with basic error, expand later?)
-- [ ] Package/namespace system (needed? or flat symbol table initially?)
-- [ ] Multiple return values (needed? or defer?)
-- [ ] String representation (array of chars vs cons list vs host string)
-- [ ] Character type (fixnum alias vs distinct type)
-- [ ] Exact instruction set for TLASM (finalize when building VM)
-- [ ] Calling convention (how are arguments passed -- in registers? on stack?)
-- [ ] Closure representation (how is the captured environment stored?)
+8. **The FPGA path is a lambda calculus machine.** The reducer
+   on FPGA is a graph reducer -- a well-studied hardware architecture.
+   Terms in BRAM, reduction logic in LUTs, I/O via UART. This is
+   not science fiction; it's been done.
 
 ---
 
-## NEXT STEP
+## 9. OPEN QUESTIONS
 
-Write the formal spec. One page. The permanent document.
-Types, special forms, primitives, evaluation rules, scoping, TCO.
+- [ ] **Arrays in Layer 2?** Does the reducer provide arrays as a
+      primitive, or is everything Church-encoded? This is the biggest
+      open question. Affects performance, purity, and FPGA path.
+- [ ] **Comparison return type.** Do <, >, = return Church-encoded
+      booleans or native integers (0/1)? Church booleans are more
+      pure but require the reducer to understand lambda terms in
+      conditional positions.
+- [ ] **How are symbols represented in Layer 2?** Symbols are needed
+      for the reader and eval. Options: unique integers (symbol table
+      in Layer 2), Church-encoded strings, or something else.
+- [ ] **How are strings represented?** Church-encoded lists of
+      integers? Arrays of integers (if arrays exist)? Something else?
+- [ ] **Error handling in Layer 2.** Pure lambda calculus has no
+      concept of errors. The reducer needs some error mechanism
+      (halt? exception? Church-encoded error values?).
+- [ ] **GC algorithm details.** Mark-sweep is chosen, but the
+      specifics depend on term representation. To be finalized when
+      Layer 1 is implemented.
+- [ ] **Compilation model.** How does the Layer 3 → Layer 2 compiler
+      work? Tree-walking? ANF (A-normal form)? CPS (continuation-passing
+      style)? To be decided during bootstrap.
+- [ ] **Layer 3 special forms.** Which special forms does ignisp
+      have? The old design had 8 (if, quote, lambda, let, setq,
+      defmacro, define, begin). Does this change?
+- [ ] **Mutation in Layer 3.** Does ignisp have `setq`? If Layer 2
+      is pure lambda calculus (no mutation), how is `setq` implemented?
+      (Possible answer: Layer 2 has mutable arrays, and setq operates
+      on array slots. Or: ignisp is a functional Lisp with no setq.
+      To be decided.)
+- [ ] **Exact Layer 2 term representation on the tape/in memory.**
+      How are variables, abstractions, and applications represented
+      in C? In Python? On FPGA? This is a Layer 1 implementation detail.
 
-Everything above is the reasoning. The spec is the conclusion.
+---
+
+## NEXT STEPS
+
+1. **Resolve the arrays question.** This is the biggest open question
+   and it affects everything downstream.
+2. **Write the Layer 2 spec.** Lambda + ints + IO. Evaluation rules,
+   primitives, encoding of basic data (booleans, pairs, lists).
+3. **Write the Layer 3 spec.** Ignisp: types, special forms, reader
+   syntax, evaluation model.
+4. **Write the Layer 1 spec.** Reducer interface, term representation,
+   memory model, I/O.
+5. **Start the Python bootstrap.** Reducer + Layer 2 code generation.
